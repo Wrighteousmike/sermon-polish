@@ -350,6 +350,24 @@ fn scratch_path(name: String) -> Result<String, String> {
     Ok(dir.join(safe).to_string_lossy().to_string())
 }
 
+/// Opens a web page in the default browser. Only this project's own GitHub pages are allowed.
+#[tauri::command]
+fn open_release_page(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/Wrighteousmike/sermon-polish") {
+        return Err("that address is not allowed".into());
+    }
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("rundll32").raw_arg(format!("url.dll,FileProtocolHandler {url}")).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open").arg(&url).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Shows a file in the system file manager with the file selected: Finder on a Mac, Explorer on Windows.
 #[tauri::command]
 fn reveal_in_folder(path: String) -> Result<(), String> {
@@ -482,7 +500,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_sidecar, write_sidecar, cancel_engine, scratch_path, remove_scratch_file, clear_scratch, reveal_in_folder, log_line, read_diagnostics])
+        .invoke_handler(tauri::generate_handler![run_sidecar, write_sidecar, cancel_engine, scratch_path, remove_scratch_file, clear_scratch, reveal_in_folder, open_release_page, log_line, read_diagnostics])
         .build(tauri::generate_context!())
         .expect("error while building Sermon Polish")
         .run(|app, event| {

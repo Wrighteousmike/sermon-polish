@@ -24,6 +24,10 @@ The app is not signed with a paid developer certificate (that keeps it free), so
 Alpha. The Mac version has had the most testing; the Intel Mac and Windows versions have not been tried on real machines yet. Feedback is welcome in the Issues tab.
 
 
+## Updates
+
+Once a day the app asks GitHub whether a newer release exists, and tells you in the sidebar if so; you can also press **Check for updates** there. Nothing about you or your recordings is sent, and nothing is installed automatically. You download the new version yourself and install it over the old one.
+
 ## Feedback and feature requests
 
 Found a bug or want a feature? Open an [issue](../../issues) here, or email devcrest.support@gmail.com. When reporting a problem, say whether you're on Mac or Windows, and what you were doing when it happened.

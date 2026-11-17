@@ -140,5 +140,6 @@ export const logLine = (msg: string) => {
   void invoke('log_line', { msg }).catch(() => {})
 }
 export const readDiagnostics = () => invoke<string>('read_diagnostics')
+export const openReleasePage = (url: string) => invoke<void>('open_release_page', { url })
 export const clearScratch = () => invoke<void>('clear_scratch')
 export const removeScratchFile = (path: string) => invoke<void>('remove_scratch_file', { path })

@@ -5,7 +5,9 @@ import Studio from './steps/Studio'
 import ExportStep, { type ExportRequest } from './steps/ExportStep'
 import OneflockWordmark from './components/OneflockWordmark'
 import Rail from './components/Rail'
-import { clearScratch, logLine, readDiagnostics } from './engine/engine'
+import { clearScratch, logLine, readDiagnostics, openReleasePage } from './engine/engine'
+import { getVersion } from '@tauri-apps/api/app'
+import { checkForUpdate, type UpdateInfo } from './lib/update'
 import { listen } from '@tauri-apps/api/event'
 import type { Source } from './engine/source'
 import { STANDARD } from './engine/settings'
@@ -74,6 +76,35 @@ function App() {
     setDiag({ text, copied })
   }
 
+  // Update check: once a day at start-up (quietly), and on request from the sidebar.
+  const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [updateNote, setUpdateNote] = useState<string | null>(null) // result of a manual check, shown in a dialog
+  const [checking, setChecking] = useState(false)
+  const runUpdateCheck = async (manual: boolean) => {
+    if (manual) setChecking(true)
+    try {
+      const current = await getVersion().catch(() => '0.0.0')
+      const found = await checkForUpdate(current)
+      logLine(`update check: ${found ? `version ${found.version} is available` : 'up to date'} (running ${current})`)
+      setUpdate(found)
+      if (manual) setUpdateNote(found ? '' : `You have the latest version (${current}).`)
+      try { localStorage.setItem('update-checked', String(Date.now())) } catch { /* fine without it */ }
+    } catch (err) {
+      logLine(`update check failed: ${err instanceof Error ? err.message : String(err)}`)
+      if (manual) setUpdateNote('Couldn’t check for updates. Check your internet connection and try again.')
+    } finally {
+      if (manual) setChecking(false)
+    }
+  }
+  useEffect(() => {
+    let last = 0
+    try { last = Number(localStorage.getItem('update-checked') ?? 0) } catch { last = 0 }
+    if (Date.now() - last < 24 * 3600 * 1000 && !(import.meta.env.DEV && new URLSearchParams(window.location.search).get('fakeupdate'))) return
+    const t = setTimeout(() => void runUpdateCheck(false), 4000)
+    return () => clearTimeout(t)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const openUpdate = (u: UpdateInfo) => void openReleasePage(u.url).catch(() => {})
+
   const startAgain = async () => {
     setCleaning('again')
     // Stops the engine and deletes every intermediate file; the dialog stays up at least a moment so it can be read.
@@ -103,6 +134,14 @@ function App() {
             />
           )}
         </div>
+        {update && (
+          <div className="update-card" role="status">
+            <strong>Version {update.version} is available</strong>
+            <span>A newer Sermon Polish is on the download page.</span>
+            <button type="button" className="primary" onClick={() => openUpdate(update)}>Get the update</button>
+          </div>
+        )}
+        <button type="button" className="link-button sidebar-diag" disabled={checking} onClick={() => void runUpdateCheck(true)}>{checking ? 'Checking…' : 'Check for updates'}</button>
         <button type="button" className="link-button sidebar-diag" onClick={() => void copyDiagnostics()} title="Copies a short technical log to paste into a bug report">Copy diagnostics</button>
       </aside>
 
@@ -134,6 +173,18 @@ function App() {
           <ExportStep source={source} request={exportRequest} onBack={() => setStep('plugins')} />
         )}
       </main>
+      {updateNote !== null && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="update-title">
+            <h2 id="update-title">{update ? `Version ${update.version} is available` : 'Updates'}</h2>
+            <p>{update ? 'A newer Sermon Polish is on the download page. Download it and install it over this one; your settings are kept.' : updateNote}</p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setUpdateNote(null)}>{update ? 'Later' : 'Close'}</button>
+              {update && <button type="button" className="primary" autoFocus onClick={() => { openUpdate(update); setUpdateNote(null) }}>Get the update</button>}
+            </div>
+          </div>
+        </div>
+      )}
       {diag && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="diag-title" style={{ width: 'min(640px, 100%)' }}>

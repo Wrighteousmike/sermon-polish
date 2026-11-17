@@ -134,3 +134,8 @@ button.just-ready { animation: readyPulse 1.2s ease-out 1; }
 .progress-bar { height: 8px; }
 
 .sidebar-diag { font-size: 0.75rem; color: var(--muted); align-self: flex-start; min-height: 0; padding: 2px 4px; margin: 0 0 0 4px; }
+
+.update-card { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid #4f8a73; background: #e9f3ee; border-radius: 10px; font-size: 0.85rem; margin: 0 0 6px; }
+.update-card span { color: var(--muted); }
+.update-card button { align-self: flex-start; min-height: 36px; padding: 0.35rem 0.8rem; }
+.sidebar-diag:disabled { opacity: 0.6; }
