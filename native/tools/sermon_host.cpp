@@ -148,6 +148,20 @@ std::string db(double v) {
   return b;
 }
 
+// Progress while opening arrives from tight loops (tens of thousands of times); the window only needs a few
+// updates a second, and a slow computer would otherwise spend its time redrawing the progress bar.
+static void emitProgressThrottled(const char* label, double f) {
+  static std::mutex m;
+  static std::chrono::steady_clock::time_point last{};
+  static std::string lastLabel;
+  std::lock_guard<std::mutex> l(m);
+  const auto now = std::chrono::steady_clock::now();
+  if (lastLabel == label && f < 0.999 && now - last < std::chrono::milliseconds(250)) return;
+  last = now;
+  lastLabel = label;
+  emit(std::string("{\"event\":\"progress\",\"label\":\"") + label + "\",\"fraction\":" + db(f) + "}");
+}
+
 // Works out the output gain that brings the chain's loudness to the target, on a worker thread: runs a
 // private copy of the chain over ~10 excerpts spread across the kept region and measures integrated
 // loudness. Restarts whenever the settings or the trim change.
@@ -489,15 +503,11 @@ int main() {
         const std::string work = text(m, "work"), peaks = text(m, "peaks");
         const auto tOpen = std::chrono::steady_clock::now();
         hlog("open: preparing the working file");
-        auto info = prepareWorkingFile(text(m, "path"), work, peaks, [](double f) {
-          emit("{\"event\":\"progress\",\"label\":\"Preparing audio…\",\"fraction\":" + db(f) + "}");
-        });
+        auto info = prepareWorkingFile(text(m, "path"), work, peaks, [](double f) { emitProgressThrottled("Preparing audio…", f); });
         (void)info;
         hlog("open: working file ready after " + std::to_string(int(msSince(tOpen))) + " ms");
         WavFileSource src(work);
-        std::shared_ptr<const FileModel> model = buildFileModel(src, Tone::Reference, [](double f) {
-          emit("{\"event\":\"progress\",\"label\":\"Analysing…\",\"fraction\":" + db(f) + "}");
-        });
+        std::shared_ptr<const FileModel> model = buildFileModel(src, Tone::Reference, [](double f) { emitProgressThrottled("Analysing…", f); });
         hlog("open: analysis done after " + std::to_string(int(msSince(tOpen))) + " ms; opening the audio device");
         std::string err;
         if (!host.open(work, model, flag(m, "nullDevice", false), int(num(m, "buffer", 2048)), &err)) { hlog("open failed: " + err); fail(err); continue; }

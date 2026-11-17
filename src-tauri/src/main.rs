@@ -157,7 +157,9 @@ async fn run_sidecar(
                         let line = line.trim();
                         if !line.is_empty() {
                             // Position/level updates arrive many times a second; log only the real events.
-                            if line.contains("\"event\":\"state\"") {
+                            if line.contains("\"event\":\"progress\"") {
+                                // Opening a long file sends these tens of times a second; keep them out of the log.
+                            } else if line.contains("\"event\":\"state\"") {
                                 STATE_COUNT.fetch_add(1, Ordering::Relaxed);
                                 if diag() {
                                     *LATEST_STATE.lock().unwrap() = line.chars().take(300).collect();

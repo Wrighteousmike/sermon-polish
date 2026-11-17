@@ -78,6 +78,7 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
       /* not remembered */
     }
   }
+  const lastProgress = useRef(0)
   const renderRef = useRef<{ onProgress: (l: string, f: number) => void; resolve: (r: { seconds: number }) => void; reject: (e: Error) => void } | null>(null)
   const [baking, setBaking] = useState(false)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -119,7 +120,13 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
       const conn = startHost(
         {
           onState: (s) => alive && setHost(s),
-          onProgress: (label, fraction) => alive && setLoading({ label, fraction }),
+          onProgress: (label, fraction) => {
+            // At most ~5 redraws a second, however fast the engine reports.
+            const now = Date.now()
+            if (!alive || (now - lastProgress.current < 200 && fraction < 0.999)) return
+            lastProgress.current = now
+            setLoading({ label, fraction })
+          },
           onLoudness: (gain) => {
             logLine(`ui: loudness solved, gain ${gain.toFixed(1)} dB`)
             if (alive) setSolvedGain(gain)

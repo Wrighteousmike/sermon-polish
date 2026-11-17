@@ -52,6 +52,18 @@ function App() {
     }, 500)
     // A diagnostic build also notes every 2 s that the window is alive; if these stop, the window is frozen.
     const beat = import.meta.env.VITE_DIAG === '1' ? window.setInterval(() => logLine('ui: heartbeat'), 2000) : undefined
+    // Diagnostic builds also count painted frames: if timers keep firing but frames stop, the window has stopped repainting.
+    let frames = 0
+    let raf = 0
+    const countFrames = () => { frames++; raf = requestAnimationFrame(countFrames) }
+    const framer = import.meta.env.VITE_DIAG === '1' ? (raf = requestAnimationFrame(countFrames), window.setInterval(() => { logLine(`ui: ${frames} frames painted in the last 5 s`); frames = 0 }, 5000)) : undefined
+    let longTasks: PerformanceObserver | undefined
+    try {
+      if (import.meta.env.VITE_DIAG === '1') {
+        longTasks = new PerformanceObserver((list) => { for (const e of list.getEntries()) if (e.duration > 250) logLine(`ui: long task ${Math.round(e.duration)} ms`) })
+        longTasks.observe({ entryTypes: ['longtask'] })
+      }
+    } catch { /* not supported */ }
     const onError = (e: ErrorEvent) => logLine(`ui error: ${e.message}`)
     const onReject = (e: PromiseRejectionEvent) => logLine(`ui error (promise): ${String(e.reason).slice(0, 300)}`)
     window.addEventListener('error', onError)
@@ -59,6 +71,9 @@ function App() {
     return () => {
       window.clearInterval(id)
       if (beat) window.clearInterval(beat)
+      if (framer) window.clearInterval(framer)
+      cancelAnimationFrame(raf)
+      longTasks?.disconnect()
       window.removeEventListener('error', onError)
       window.removeEventListener('unhandledrejection', onReject)
     }
