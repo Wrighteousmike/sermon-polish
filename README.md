@@ -23,6 +23,11 @@ The app is not signed with a paid developer certificate (that keeps it free), so
 
 Alpha. The Mac version has had the most testing; the Intel Mac and Windows versions have not been tried on real machines yet. Feedback is welcome in the Issues tab.
 
+
+## Feedback and feature requests
+
+Found a bug or want a feature? Open an [issue](../../issues) here, or email devcrest.support@gmail.com. When reporting a problem, say whether you're on Mac or Windows, and what you were doing when it happened.
+
 ## Source code and building
 
 Sermon Polish is free software under the GPL-3.0 (see `LICENSE`). The text below is for developers who want to build it.
