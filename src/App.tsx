@@ -98,7 +98,11 @@ function App() {
   const runUpdateCheck = async (manual: boolean) => {
     if (manual) setChecking(true)
     try {
-      const current = await getVersion().catch(() => '0.0.0')
+      // If the running version can't be read, don't guess (that could announce an update that isn't one).
+      const current = await getVersion().catch((e) => {
+        if (import.meta.env.DEV) return '0.0.0'
+        throw e
+      })
       const found = await checkForUpdate(current)
       logLine(`update check: ${found ? `version ${found.version} is available` : 'up to date'} (running ${current})`)
       setUpdate(found)

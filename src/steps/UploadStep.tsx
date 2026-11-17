@@ -1,3 +1,4 @@
+import { CORES, SLOW_MACHINE } from '../lib/machine'
 import { useEffect, useRef, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -172,6 +173,12 @@ export default function UploadStep({ onSourceReady }: UploadStepProps) {
         </button>
       )}
 
+      {SLOW_MACHINE && (
+        <p className="slow-warning" role="note">
+          <strong>Heads up:</strong> this computer has only {CORES} processor cores. Cleaning audio is demanding work, so opening and cleaning a
+          long recording can take many minutes here, and playback may stutter while it works. Everything will still work; it just needs patience.
+        </p>
+      )}
       <ul className="upload-disclaimers">
         <li>Your recording never leaves this computer — everything happens right here.</li>
         <li>How long cleaning takes depends on your computer and the length of the recording. A 45-minute sermon usually takes a few minutes.</li>

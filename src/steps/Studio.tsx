@@ -32,6 +32,7 @@ import AmountSlider from '../components/AmountSlider'
 import TrimDetail from '../components/TrimDetail'
 import Tour, { type TourStep } from '../components/Tour'
 import Rail, { type RailItem } from '../components/Rail'
+import { CORES, SLOW_MACHINE } from '../lib/machine'
 import type { ExportRequest, Rendering } from './ExportStep'
 
 const CONFIDENCE_LABEL: Record<Suggestion['confidence'], string> = { high: 'confident', medium: 'fairly sure', low: 'rough guess' }
@@ -757,7 +758,7 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
       {loading && (
         <div className="progress">
           <div className="progress-bar"><div className="progress-fill" style={{ width: `${Math.max(4, loading.fraction * 100)}%` }} /></div>
-          <p className="trim-hint">{loading.label} Long recordings take a moment the first time.</p>
+          <p className="trim-hint">{loading.label} Long recordings take a moment the first time.{SLOW_MACHINE && ` This computer has ${CORES} processor cores, so it can take several minutes for a long recording.`}</p>
         </div>
       )}
 

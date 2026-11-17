@@ -139,3 +139,6 @@ button.just-ready { animation: readyPulse 1.2s ease-out 1; }
 .update-card span { color: var(--muted); }
 .update-card button { align-self: flex-start; min-height: 36px; padding: 0.35rem 0.8rem; }
 .sidebar-diag:disabled { opacity: 0.6; }
+
+.slow-warning { margin: 0; padding: 12px 14px; border: 1px solid #c98a2b; background: #ffffff; color: #2f3a45; border-radius: 10px; font-size: 0.92rem; line-height: 1.45; }
+.slow-warning strong { color: #8a5a10; }
