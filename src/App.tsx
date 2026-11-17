@@ -5,7 +5,7 @@ import Studio from './steps/Studio'
 import ExportStep, { type ExportRequest } from './steps/ExportStep'
 import OneflockWordmark from './components/OneflockWordmark'
 import Rail from './components/Rail'
-import { clearScratch } from './engine/engine'
+import { clearScratch, logLine, readDiagnostics } from './engine/engine'
 import { listen } from '@tauri-apps/api/event'
 import type { Source } from './engine/source'
 import { STANDARD } from './engine/settings'
@@ -39,6 +39,41 @@ function App() {
     }
   }, [])
 
+  // Diagnostics: notes if the window stalls or errors, and "Copy diagnostics" collects the log for a bug report.
+  useEffect(() => {
+    let last = performance.now()
+    const id = window.setInterval(() => {
+      const now = performance.now()
+      const lag = now - last - 500
+      if (lag > 1500) logLine(`ui: the window stalled for ${Math.round(lag)} ms (it was busy)`)
+      last = now
+    }, 500)
+    // A diagnostic build also notes every 2 s that the window is alive; if these stop, the window is frozen.
+    const beat = import.meta.env.VITE_DIAG === '1' ? window.setInterval(() => logLine('ui: heartbeat'), 2000) : undefined
+    const onError = (e: ErrorEvent) => logLine(`ui error: ${e.message}`)
+    const onReject = (e: PromiseRejectionEvent) => logLine(`ui error (promise): ${String(e.reason).slice(0, 300)}`)
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onReject)
+    return () => {
+      window.clearInterval(id)
+      if (beat) window.clearInterval(beat)
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onReject)
+    }
+  }, [])
+  const [diag, setDiag] = useState<{ text: string; copied: boolean } | null>(null)
+  const copyDiagnostics = async () => {
+    const text = await readDiagnostics().catch((e) => `Could not read the log: ${e}`)
+    let copied = false
+    try {
+      await navigator.clipboard.writeText(text)
+      copied = true
+    } catch {
+      copied = false
+    }
+    setDiag({ text, copied })
+  }
+
   const startAgain = async () => {
     setCleaning('again')
     // Stops the engine and deletes every intermediate file; the dialog stays up at least a moment so it can be read.
@@ -68,6 +103,7 @@ function App() {
             />
           )}
         </div>
+        <button type="button" className="link-button sidebar-diag" onClick={() => void copyDiagnostics()} title="Copies a short technical log to paste into a bug report">Copy diagnostics</button>
       </aside>
 
       <main className="app-main">
@@ -98,6 +134,19 @@ function App() {
           <ExportStep source={source} request={exportRequest} onBack={() => setStep('plugins')} />
         )}
       </main>
+      {diag && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="diag-title" style={{ width: 'min(640px, 100%)' }}>
+            <h2 id="diag-title">{diag.copied ? 'Diagnostics copied' : 'Diagnostics'}</h2>
+            <p>{diag.copied ? 'Paste it into your message. It contains timings and messages from the app, not your audio.' : 'Select all of this and copy it into your message. It contains timings and messages from the app, not your audio.'}</p>
+            <textarea readOnly value={diag.text} rows={10} style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '0.75rem' }} onFocus={(e) => e.currentTarget.select()} />
+            <div className="modal-actions" style={{ marginTop: 12 }}>
+              <button type="button" onClick={() => void navigator.clipboard.writeText(diag.text).then(() => setDiag({ ...diag, copied: true })).catch(() => {})}>Copy again</button>
+              <button type="button" className="primary" autoFocus onClick={() => setDiag(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {cleaning && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="cleaning-title" aria-describedby="cleaning-body">

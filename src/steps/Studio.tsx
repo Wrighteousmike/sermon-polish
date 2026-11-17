@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { runEngine, scratchPath, removeScratchFile, type EngineJob } from '../engine/engine'
+import { runEngine, scratchPath, removeScratchFile, logLine, type EngineJob } from '../engine/engine'
 import { liveParams, startHost, type HostConnection, type HostState } from '../engine/host'
 import {
   amountLabel,
@@ -120,7 +120,10 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
         {
           onState: (s) => alive && setHost(s),
           onProgress: (label, fraction) => alive && setLoading({ label, fraction }),
-          onLoudness: (gain) => alive && setSolvedGain(gain),
+          onLoudness: (gain) => {
+            logLine(`ui: loudness solved, gain ${gain.toFixed(1)} dB`)
+            if (alive) setSolvedGain(gain)
+          },
           onBake: (state) => alive && setBaking(state === 'working'),
           onRender: (ev) => {
             const r = renderRef.current
@@ -195,6 +198,11 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
     }
   }, [source])
 
+  useEffect(() => logLine(`ui: step ${tab}, trim saved ${trimSaved}`), [tab, trimSaved])
+  useEffect(() => {
+    if (ready) logLine('ui: engine ready')
+  }, [ready])
+
   // The start and end handles only move while the Top and tail step is showing.
   useEffect(() => {
     regionRef.current?.setOptions({ resize: tab === 'trim' })
@@ -233,11 +241,13 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
           const a = ev as unknown as Analysis
           setAnalysis(a)
           setAnalysisState('done')
+          logLine('ui: Auto analysis finished')
           if (!touchedRef.current) setSettings((prev) => ({ ...settingsFromSuggestions(a.suggestions), pregain: prev.pregain }))
         })
         .catch((err: Error) => {
           if (cancelled || err.message === 'Cancelled') return
           setAnalysisState('failed')
+          logLine(`ui: Auto analysis failed: ${err.message}`)
           if (!touchedRef.current) setSettings((prev) => ({ ...STANDARD, pregain: prev.pregain }))
         })
     }, 700) // wait for trim drags to settle
@@ -295,6 +305,7 @@ export default function Studio({ source, paused, onExport, onStartAgain, onRetur
   const [justReady, setJustReady] = useState(false)
   useEffect(() => {
     if (!canPlay) return
+    logLine('ui: playback unlocked')
     setBlockedNote(false)
     setJustReady(true)
     const t = window.setTimeout(() => setJustReady(false), 1400)

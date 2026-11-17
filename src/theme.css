@@ -132,3 +132,5 @@ button.just-ready { animation: readyPulse 1.2s ease-out 1; }
 .export-progress .applying { margin-left: 0; font-size: 0.9rem; }
 .export-progress-note { color: var(--muted); }
 .progress-bar { height: 8px; }
+
+.sidebar-diag { font-size: 0.75rem; color: var(--muted); align-self: flex-start; min-height: 0; padding: 2px 4px; margin: 0 0 0 4px; }

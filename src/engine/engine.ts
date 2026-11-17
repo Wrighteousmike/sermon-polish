@@ -136,5 +136,9 @@ export function runFfmpeg(args: string[], onLine?: (line: string) => void): RawR
 }
 
 export const scratchPath = (name: string) => invoke<string>('scratch_path', { name })
+export const logLine = (msg: string) => {
+  void invoke('log_line', { msg }).catch(() => {})
+}
+export const readDiagnostics = () => invoke<string>('read_diagnostics')
 export const clearScratch = () => invoke<void>('clear_scratch')
 export const removeScratchFile = (path: string) => invoke<void>('remove_scratch_file', { path })

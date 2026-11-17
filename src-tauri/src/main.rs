@@ -30,6 +30,80 @@ fn emit(app: &AppHandle, job_id: &str, kind: &str, data: String) {
     );
 }
 
+// ---- diagnostics log ----------------------------------------------------------------------------------
+// A small text log (kept outside the scratch folder, so it survives Start again and quitting) that
+// "Copy diagnostics" collects. It holds timings and states, never audio.
+static LOG_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// A diagnostic build (made with SERMON_DIAG=1) also writes the log to the Desktop as it goes, plus a
+/// heartbeat every few seconds, so the log can be read after the window has frozen.
+fn diag() -> bool {
+    option_env!("SERMON_DIAG") == Some("1")
+}
+
+fn desktop_log() -> Option<PathBuf> {
+    if !diag() {
+        return None;
+    }
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    Some(PathBuf::from(home).join("Desktop").join("Sermon Polish diagnostic log.txt"))
+}
+
+static LATEST_STATE: Mutex<String> = Mutex::new(String::new());
+static STATE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn log_dir() -> PathBuf {
+    std::env::temp_dir().join("sermon-polish-logs")
+}
+
+fn log_line_now(msg: &str) {
+    use std::io::Write;
+    let t = LOG_START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
+    let _ = std::fs::create_dir_all(log_dir());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_dir().join("app.log")) {
+        let _ = writeln!(f, "[{t:9.2}s] {msg}");
+    }
+    if let Some(p) = desktop_log() {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "[{t:9.2}s] {msg}");
+        }
+    }
+}
+
+fn start_log() {
+    let dir = log_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let cur = dir.join("app.log");
+    let _ = std::fs::rename(&cur, dir.join("app.previous.log"));
+    if let Some(p) = desktop_log() {
+        let _ = std::fs::rename(&p, p.with_file_name("Sermon Polish diagnostic log (previous run).txt"));
+    }
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0);
+    log_line_now(&format!(
+        "Sermon Polish {} on {} {} with {} logical processors",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cores
+    ));
+}
+
+#[tauri::command]
+fn log_line(msg: String) {
+    log_line_now(&msg.chars().take(400).collect::<String>());
+}
+
+/// Everything worth sending with a bug report: the current and previous session logs.
+#[tauri::command]
+fn read_diagnostics() -> String {
+    let tail = |name: &str| -> String {
+        let text = std::fs::read_to_string(log_dir().join(name)).unwrap_or_default();
+        let keep = text.len().saturating_sub(60_000);
+        text[text.char_indices().map(|(i, _)| i).find(|i| *i >= keep).unwrap_or(0)..].to_string()
+    };
+    format!("=== this session ===\n{}\n=== previous session ===\n{}\n", tail("app.log"), tail("app.previous.log"))
+}
+
 type Spawned = (tauri::async_runtime::Receiver<CommandEvent>, CommandChild);
 
 /// The helper programs bundled with the app (see `externalBin` in tauri.conf.json).
@@ -67,6 +141,7 @@ async fn run_sidecar(
     args: Vec<String>,
 ) -> Result<(), String> {
     let (mut rx, child) = spawn_sidecar(&app, &sidecar, args)?;
+    log_line_now(&format!("started {sidecar} ({job_id})"));
     jobs.0.lock().unwrap().insert(job_id.clone(), child);
 
     let app2 = app.clone();
@@ -81,11 +156,24 @@ async fn run_sidecar(
                         let line: String = buf.drain(..=pos).collect();
                         let line = line.trim();
                         if !line.is_empty() {
+                            // Position/level updates arrive many times a second; log only the real events.
+                            if line.contains("\"event\":\"state\"") {
+                                STATE_COUNT.fetch_add(1, Ordering::Relaxed);
+                                if diag() {
+                                    *LATEST_STATE.lock().unwrap() = line.chars().take(300).collect();
+                                }
+                            } else {
+                                log_line_now(&format!("{job_id} out: {}", line.chars().take(200).collect::<String>()));
+                            }
                             emit(&app2, &job_id, "line", line.to_string());
                         }
                     }
                 }
-                CommandEvent::Stderr(bytes) => emit(&app2, &job_id, "stderr", String::from_utf8_lossy(&bytes).to_string()),
+                CommandEvent::Stderr(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes).to_string();
+                    log_line_now(&format!("{job_id} err: {}", text.trim().chars().take(300).collect::<String>()));
+                    emit(&app2, &job_id, "stderr", text)
+                }
                 CommandEvent::Terminated(payload) => {
                     code = payload.code.unwrap_or(-1);
                 }
@@ -96,6 +184,7 @@ async fn run_sidecar(
             emit(&app2, &job_id, "line", buf.trim().to_string());
         }
         app2.state::<Jobs>().0.lock().unwrap().remove(&job_id);
+        log_line_now(&format!("{job_id} exited with code {code}"));
         emit(&app2, &job_id, "exit", code.to_string());
     });
     Ok(())
@@ -359,6 +448,17 @@ fn main() {
             }
         })
         .setup(|app| {
+            start_log();
+            if diag() {
+                // Every 5 s: how many position updates the engine sent, and the latest one. If the window freezes
+                // but these keep arriving, the engine is fine and it is the window that is stuck.
+                std::thread::spawn(|| loop {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let n = STATE_COUNT.swap(0, Ordering::Relaxed);
+                    let last = LATEST_STATE.lock().unwrap().clone();
+                    log_line_now(&format!("heartbeat: {n} engine updates in 5 s; last: {last}"));
+                });
+            }
             // Open as large as the Export screen needs, but never bigger than the screen can show.
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(Some(m)) = win.current_monitor() {
@@ -382,7 +482,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![run_sidecar, write_sidecar, cancel_engine, scratch_path, remove_scratch_file, clear_scratch, reveal_in_folder])
+        .invoke_handler(tauri::generate_handler![run_sidecar, write_sidecar, cancel_engine, scratch_path, remove_scratch_file, clear_scratch, reveal_in_folder, log_line, read_diagnostics])
         .build(tauri::generate_context!())
         .expect("error while building Sermon Polish")
         .run(|app, event| {

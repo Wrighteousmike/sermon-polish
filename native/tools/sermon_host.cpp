@@ -31,6 +31,15 @@
 #include "rt/host.h"
 #include "rt/render.h"
 
+// Timeline lines for diagnostics (the app collects stderr into its log).
+static std::chrono::steady_clock::time_point g_t0 = std::chrono::steady_clock::now();
+static void hlog(const std::string& msg) {
+  const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_t0).count();
+  std::fprintf(stderr, "[host %.1fs] %s\n", t, msg.c_str());
+  std::fflush(stderr);
+}
+static double msSince(std::chrono::steady_clock::time_point a) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count(); }
+
 using namespace sermon;
 using namespace sermon::rt;
 
@@ -214,7 +223,10 @@ class GainSolver {
       }
       p.outputGainDb = 0;
       chain.setParams(p);
+      const auto t0 = std::chrono::steady_clock::now();
+      hlog("loudness measurement started");
       const double lufs = measure(chain, src, ch, a, b, gen);
+      hlog(std::isfinite(lufs) ? "loudness measured in " + std::to_string(int(msSince(t0))) + " ms" : "loudness measurement abandoned after " + std::to_string(int(msSince(t0))) + " ms (settings or trim changed)");
       std::lock_guard<std::mutex> l(m_);
       if (gen == gen_ && std::isfinite(lufs)) done_(std::isnan(target) ? 0.0 : std::max(-60.0, std::min(60.0, target - lufs)), lufs);
     }
@@ -363,6 +375,7 @@ class Baker {
       status_("working");
       struct Idle { Baker* b; ~Idle() { std::lock_guard<std::mutex> l(b->m_); b->working_ = false; b->cv_idle_.notify_all(); } } idle{this};
       try {
+        hlog(std::string("preparing in the background: ") + (needBake ? "clip repair " : "") + (needRev ? "echo reduction" : ""));
         AudioData a = load(declip && bakedDone_ ? bakedPath() : work_);
         if (needBake) {
           for (auto& c : a.channels) {
@@ -372,6 +385,7 @@ class Baker {
           if (stale(gen)) continue;
           writeWav(bakedPath(), a, 32);
           bakedDone_ = true;
+          hlog("clip repair finished");
         }
         if (needRev) {
           // Correction = WPE(x) - x at full strength, one channel at a time to keep memory down.
@@ -387,6 +401,7 @@ class Baker {
           if (stale(gen)) continue;
           writeWav(revPath(declip), corr, 32);
           revDone_[declip ? 1 : 0] = true;
+          hlog("echo reduction prepared");
         }
         if (stale(gen)) continue;
         publish(declip);
@@ -472,16 +487,21 @@ int main() {
         baker.reset();
         host.close();
         const std::string work = text(m, "work"), peaks = text(m, "peaks");
+        const auto tOpen = std::chrono::steady_clock::now();
+        hlog("open: preparing the working file");
         auto info = prepareWorkingFile(text(m, "path"), work, peaks, [](double f) {
           emit("{\"event\":\"progress\",\"label\":\"Preparing audio…\",\"fraction\":" + db(f) + "}");
         });
         (void)info;
+        hlog("open: working file ready after " + std::to_string(int(msSince(tOpen))) + " ms");
         WavFileSource src(work);
         std::shared_ptr<const FileModel> model = buildFileModel(src, Tone::Reference, [](double f) {
           emit("{\"event\":\"progress\",\"label\":\"Analysing…\",\"fraction\":" + db(f) + "}");
         });
+        hlog("open: analysis done after " + std::to_string(int(msSince(tOpen))) + " ms; opening the audio device");
         std::string err;
-        if (!host.open(work, model, flag(m, "nullDevice", false), int(num(m, "buffer", 2048)), &err)) { fail(err); continue; }
+        if (!host.open(work, model, flag(m, "nullDevice", false), int(num(m, "buffer", 2048)), &err)) { hlog("open failed: " + err); fail(err); continue; }
+        hlog("open: ready after " + std::to_string(int(msSince(tOpen))) + " ms");
         host.setParams(params);
         duration = host.duration();
         trimStart = 0;
