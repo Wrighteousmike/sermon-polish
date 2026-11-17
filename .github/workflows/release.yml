@@ -1,0 +1,205 @@
+# Builds the desktop app installers: macOS (Apple silicon + Intel) and Windows.
+# Run it by hand (Actions > release > Run workflow) or by pushing a tag like v0.2.0.
+#
+# STATUS: the macOS jobs mirror steps verified locally (the Intel build was cross-compiled and tested
+# under Rosetta). The Windows job has NEVER RUN: treat its first run as a shakedown and expect a fix or
+# two. Everything ships unsigned (see docs/release.md).
+name: release
+
+permissions:
+  contents: write   # lets the build attach installers to a release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mac:
+        description: "Build the macOS installers (Apple silicon + Intel)"
+        type: boolean
+        default: false
+      windows:
+        description: "Build the Windows installer"
+        type: boolean
+        default: true
+      release:
+        description: "Attach the finished installer to this existing release tag (e.g. v0.3.0); leave empty to just keep it as a build artifact"
+        type: string
+        default: ""
+  push:
+    tags: ["v*"]
+    # Pushing a build/* branch builds the Windows installer only (the Mac installers are built locally;
+    # macOS runners are the expensive ones on a private repository).
+    branches: ["build/**"]
+
+jobs:
+  mac:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.mac) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple silicon
+            runner: macos-14
+            triple: aarch64-apple-darwin
+            arch: ""
+          - name: Intel
+            runner: macos-14        # cross-compiled on Apple silicon; the engine is tested under Rosetta
+            triple: x86_64-apple-darwin
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Fetch sources
+        run: native/scripts/fetch_deps.sh
+      - name: Build LAME, FFmpeg, DeepFilterNet
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          native/scripts/build_lame.sh
+          native/scripts/build_ffmpeg.sh
+          native/scripts/build_deepfilternet.sh
+      - name: Build the engine
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            cmake -S native -B native/build -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DSERMON_ARCH=${{ matrix.arch }} -DSERMON_DF_TARGET=${{ matrix.triple }}
+          else
+            cmake -S native -B native/build
+          fi
+          cmake --build native/build -j4
+      - name: Engine tests (native architecture only)
+        if: matrix.arch == ''
+        run: |
+          native/build/rt_tests && native/build/stage_tests && native/build/dsp_tests
+      - name: Prepare sidecars
+        env:
+          TARGET_TRIPLE: ${{ matrix.triple }}
+          FFMPEG_DIR: native/third_party/ffmpeg-install${{ matrix.arch && format('-{0}', matrix.arch) || '' }}
+        run: scripts/prepare-sidecar.sh
+      - name: Build the app
+        run: |
+          npm ci
+          npx tauri build --target ${{ matrix.triple }} --bundles app
+      - name: Package (dmg + zip)
+        run: |
+          APP="src-tauri/target/${{ matrix.triple }}/release/bundle/macos/Sermon Polish.app"
+          mkdir -p out stage
+          cp -R "$APP" stage/ && ln -s /Applications stage/Applications
+          hdiutil create -quiet -volname "Sermon Polish" -srcfolder stage -ov -format UDZO "out/Sermon Polish ${{ matrix.triple }}.dmg"
+          ditto -c -k --keepParent "$APP" "out/Sermon Polish ${{ matrix.triple }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.triple }}
+          path: out/*
+
+  windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows }}
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      # The C++ engine, FFmpeg and LAME are built with MinGW-w64 (MSYS2) and linked statically, so the
+      # sidecar .exe files need no extra DLLs; the Tauri app itself uses the normal MSVC toolchain.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git make curl unzip diffutils
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkgconf mingw-w64-x86_64-zlib
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, x86_64-pc-windows-gnu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Fetch sources
+        run: native/scripts/fetch_deps.sh
+      - name: Restore cached LAME, FFmpeg, DeepFilterNet
+        id: depcache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            native/third_party/lame-install
+            native/third_party/ffmpeg-install
+            native/third_party/DeepFilterNet/target/x86_64-pc-windows-gnu/release/libdf.a
+            native/third_party/DeepFilterNet/models
+          key: win-deps-${{ hashFiles('native/scripts/build_lame.sh', 'native/scripts/build_ffmpeg.sh', 'native/scripts/build_deepfilternet.sh', 'native/scripts/fetch_deps.sh') }}
+      - name: Build LAME, FFmpeg, DeepFilterNet (MinGW)
+        if: steps.depcache.outputs.cache-hit != 'true'
+        env:
+          RUST_TARGET: x86_64-pc-windows-gnu
+        run: |
+          native/scripts/build_lame.sh
+          native/scripts/build_ffmpeg.sh
+          native/scripts/build_deepfilternet.sh
+      - name: Save LAME, FFmpeg, DeepFilterNet to cache
+        if: steps.depcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            native/third_party/lame-install
+            native/third_party/ffmpeg-install
+            native/third_party/DeepFilterNet/target/x86_64-pc-windows-gnu/release/libdf.a
+            native/third_party/DeepFilterNet/models
+          key: win-deps-${{ hashFiles('native/scripts/build_lame.sh', 'native/scripts/build_ffmpeg.sh', 'native/scripts/build_deepfilternet.sh', 'native/scripts/fetch_deps.sh') }}
+      - name: Check ffmpeg needs no extra DLLs
+        run: |
+          bad=0
+          for f in native/third_party/ffmpeg-install/bin/ffmpeg.exe; do
+            echo "== $f"; objdump -p "$f" | grep "DLL Name" || true
+            if objdump -p "$f" | grep -iE "DLL Name: (libwinpthread|libgcc|libstdc\+\+|libz|zlib|libiconv|libssp|libgomp)"; then bad=1; fi
+          done
+          exit $bad
+      - name: Build the engine
+        run: |
+          cmake -S native -B native/build -G "MinGW Makefiles" -DSERMON_DF_TARGET=x86_64-pc-windows-gnu
+          cmake --build native/build -j4
+      - name: Check the engine programs need no extra DLLs
+        run: |
+          bad=0
+          for f in native/build/sermon_clean.exe native/build/sermon_host.exe; do
+            echo "== $f"; objdump -p "$f" | grep "DLL Name" || true
+            if objdump -p "$f" | grep -iE "DLL Name: (libwinpthread|libgcc|libstdc\+\+|libz|zlib|libiconv|libssp|libgomp)"; then bad=1; fi
+          done
+          exit $bad
+      - name: Engine tests
+        run: |
+          native/build/rt_tests.exe && native/build/stage_tests.exe && native/build/dsp_tests.exe
+      - name: Prepare sidecars
+        env:
+          TARGET_TRIPLE: x86_64-pc-windows-msvc
+        run: scripts/prepare-sidecar.sh
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          npm ci
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+      - name: Attach the installer to the release
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.release != '') || startsWith(github.ref, 'refs/tags/') }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ inputs.release }}"
+          if (-not $tag) { $tag = $env:GITHUB_REF_NAME }
+          $ver = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $src = Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe | Select-Object -First 1
+          $name = "Sermon Polish $ver (Windows) setup.exe"
+          Copy-Item $src.FullName $name
+          gh release upload $tag $name --clobber

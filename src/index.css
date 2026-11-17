@@ -1,0 +1,45 @@
+:root {
+  --text: #232a31;
+  --text-h: #131a20;
+  --bg: #f3f6f8;
+  --surface: #ffffff;
+  --border: #d3dce3;
+  --sage: #3d5a73;
+  --sage-deep: #2c4256;
+  --board: #3b4756;
+  --tile: #ffffff;
+  --accent: #a15c34;
+  /* #666 on white ≈ 5.75:1 — #888 (the old value) was ≈ 3.9:1, below the
+     WCAG AA 4.5:1 minimum for normal-size text. */
+  --muted: #4f5b66;
+
+  --sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --display: var(--sans);
+  --numeral: var(--sans);
+
+  font: 16px/145% var(--sans);
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+
+body {
+  margin: 0;
+  min-height: 100svh;
+}
+
+h1,
+h2 {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}

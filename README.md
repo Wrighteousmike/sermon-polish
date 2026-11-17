@@ -22,3 +22,39 @@ The app is not signed with a paid developer certificate (that keeps it free), so
 ## Status
 
 Alpha. The Mac version has had the most testing; the Intel Mac and Windows versions have not been tried on real machines yet. Feedback is welcome in the Issues tab.
+
+## Source code and building
+
+Sermon Polish is free software under the GPL-3.0 (see `LICENSE`). The text below is for developers who want to build it.
+
+A free, open-source ministry tool: drop in a raw sermon recording (audio or video), and play it
+through a live, DAW-style cleaning chain (noise, hum, echo, level, tone, sharp S sounds, loudness)
+while you change any setting; set the start and end, and export WAV or MP3. It runs entirely on your computer; nothing is uploaded.
+
+**Status: desktop alpha for Mac (Apple silicon); Intel Mac and Windows builds are being prepared (`docs/release.md`).** See `docs/alpha-notes.md` for what works, what
+hasn't been tested, and the known limits. Install files and instructions are in `release/`.
+
+### How it's built
+
+- **Desktop shell:** Tauri v2 (`src-tauri/`) with the React UI (`src/`).
+- **Audio engine:** C++17 (`native/`), a real-time block engine run as a sidecar process; DeepFilterNet3 and RNNoise for
+  noise, our own declipper, leveler, dereverb (WPE), EQ, de-esser, compressor and true-peak
+  limiter, and LAME for MP3. See `native/README.md` and `docs/app-architecture.md`.
+- **Auto mode:** the engine analyses the recording and suggests every setting with a reason; the
+  user can override anything (`docs/auto-analysis.md`).
+
+### Building from source
+
+```sh
+(cd native && ./scripts/fetch_deps.sh && ./scripts/build_lame.sh && ./scripts/build_deepfilternet.sh)
+cmake -S native -B native/build && cmake --build native/build       # the engine
+./scripts/prepare-sidecar.sh                                         # copy it into the app
+npm install && npx tauri build --bundles app                         # needs a Rust toolchain
+```
+
+Rust, downloads and build output are kept on the external drive in this setup (see
+`native/README.md`). The old browser-only version is in git history (before the native pivot).
+
+### License
+
+Intended GPL-3.
